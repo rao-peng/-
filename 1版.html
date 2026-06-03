@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分形蜂群：矩阵跃迁 (Fractal Swarm: Matrix Shift)</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background-color: #010103; font-family: 'Consolas', 'Courier New', monospace; }
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        canvas { background: #020205; box-shadow: 0 0 80px rgba(0,0,0,1); max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; display: block; }
+        
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; padding: 30px 40px; display: flex; flex-direction: column; justify-content: space-between; }
+        .top-hud { display: flex; justify-content: space-between; align-items: flex-start; }
+        .data-panel { background: rgba(5,5,15,0.8); border-top: 3px solid #00f0ff; padding: 15px 25px; color: #fff; font-size: 18px; font-weight: bold; backdrop-filter: blur(5px); box-shadow: 0 5px 25px rgba(0,240,255,0.15); clip-path: polygon(0 0, 100% 0, 95% 100%, 5% 100%); }
+        .score-val { color: #00f0ff; font-size: 32px; text-shadow: 0 0 15px #00f0ff; margin-left: 10px; display: inline-block; min-width: 120px; }
+        .multiplier { color: #ffaa00; font-size: 16px; margin-left: 10px; text-shadow: 0 0 10px #ffaa00; }
+        
+        .phase-indicator { display: flex; gap: 12px; margin-top: 10px; justify-content: center; }
+        .node { width: 35px; height: 12px; border: 1px solid #fff; opacity: 0.3; transition: 0.15s; transform: skewX(-20deg); }
+        .node.active { opacity: 1; transform: scale(1.1) skewX(-20deg); box-shadow: 0 0 15px currentColor; background: currentColor; }
+
+        .health-bar { width: 220px; height: 8px; background: rgba(255,255,255,0.1); margin-top: 10px; border-radius: 4px; overflow: hidden; }
+        .health-fill { height: 100%; background: linear-gradient(90deg, #00f0ff, #ff0055); transition: width 0.1s; }
+
+        .mask { position: absolute; inset: 0; background: rgba(2,2,6,0.92); display: flex; justify-content: center; align-items: center; z-index: 100; transition: opacity 0.4s; pointer-events: auto; backdrop-filter: blur(8px); }
+        .mask.hidden { opacity: 0; pointer-events: none; }
+        .terminal { background: rgba(10,10,20,0.8); border: 1px solid rgba(0,240,255,0.3); padding: 40px; max-width: 850px; color: #e0e0e0; box-shadow: 0 0 60px rgba(0,240,255,0.1); position: relative; }
+        .terminal::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 4px; background: linear-gradient(90deg, #00f0ff, #ff0055, #ffaa00); }
+        h1 { font-size: 34px; margin-bottom: 20px; color: #fff; text-shadow: 0 0 15px rgba(255,255,255,0.5); letter-spacing: 2px; }
+        p { line-height: 1.7; font-size: 15px; margin-bottom: 25px; }
+        
+        .controls-grid { display: flex; justify-content: space-around; background: rgba(0,0,0,0.5); padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.1); }
+        .hand-col { text-align: center; }
+        .hand-title { color: #00f0ff; font-weight: bold; margin-bottom: 15px; font-size: 18px; letter-spacing: 2px; }
+        .key { display: inline-block; background: #222; color: #fff; padding: 6px 12px; border-radius: 4px; border: 1px solid #555; font-weight: bold; margin: 2px; box-shadow: 0 2px 0 #000; }
+        
+        .btn { background: transparent; color: #00f0ff; border: 2px solid #00f0ff; padding: 12px 40px; font-size: 20px; font-weight: bold; cursor: pointer; text-transform: uppercase; transition: 0.2s; width: 100%; }
+        .btn:hover { background: #00f0ff; color: #000; box-shadow: 0 0 30px #00f0ff; }
+        .hl { color: #ff0055; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="mainCanvas"></canvas>
+
+    <div class="ui-layer">
+        <div class="top-hud">
+            <div class="data-panel" id="panel-score">
+                SYNC_RATE <span class="score-val" id="ui-score">00000</span>
+                <span class="multiplier" id="ui-mult">x1.0</span>
+            </div>
+            <div class="data-panel" style="border-top-color: #ff0055;">
+                CORE_INTEGRITY
+                <div class="health-bar"><div class="health-fill" id="ui-health"></div></div>
+                <div class="phase-indicator">
+                    <div class="node" id="node-0" style="color:#00f0ff; border-color:#00f0ff;"></div>
+                    <div class="node" id="node-1" style="color:#ff0055; border-color:#ff0055;"></div>
+                    <div class="node" id="node-2" style="color:#ffaa00; border-color:#ffaa00;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mask" id="boot-mask">
+        <div class="terminal">
+            <h1 id="menu-title">FRACTAL SWARM : MATRIX SHIFT</h1>
+            <p>
+                <strong>【操作体系已解耦】</strong>：系统已为你分配双轴独立控制链路，请将双手放置于键盘对应区域。<br><br>
+                <strong>三重博弈机制：</strong><br>
+                1. <strong>群落 (Swarms)</strong>：同色冲入吸收，异色碰撞解体。<br>
+                2. <strong>墙列 (Gates)</strong>：纯能量屏障，必须切对颜色直接撞碎突破！<br>
+                3. <strong>诡雷 (Dark Mines)</strong>：物理暗物质，<span class="hl">无视相位护盾，必须使用纯走位躲避！</span>
+            </p>
+            
+            <div class="controls-grid">
+                <div class="hand-col">
+                    <div class="hand-title">【左手】空间位移</div>
+                    <div><span class="key">W</span> 上轨道 / <span class="key">S</span> 下轨道</div>
+                    <div style="margin-top:8px;"><span class="key">A</span> 退守 / <span class="key">D</span> 突进(高分倍率)</div>
+                </div>
+                <div class="hand-col" style="border-left: 1px solid rgba(255,255,255,0.1); padding-left: 20px;">
+                    <div class="hand-title" style="color:#ff0055;">【右手】相位打击</div>
+                    <div><span class="key">J</span> 蓝 / <span class="key">K</span> 红 / <span class="key">L</span> 黄</div>
+                    <div style="margin-top:8px; font-size:12px; color:#888;">(支持方向键 ← ↓ → 备选)</div>
+                </div>
+            </div>
+
+            <button class="btn" id="btn-start">启动神经连接引擎</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * 核心引擎：离散轨道 + 双轴操作 + 群体智能
+ */
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+const WIDTH = 1280;
+const HEIGHT = 720;
+canvas.width = WIDTH;
+canvas.height = HEIGHT;
+
+const PHASES = [
+    { id: 0, color: '#00f0ff' }, // 蓝
+    { id: 1, color: '#ff0055' }, // 红
+    { id: 2, color: '#ffaa00' }  // 黄
+];
+
+// 三条离散轨道Y坐标
+const LANES = [160, HEIGHT/2, HEIGHT - 160];
+
+let state = { running: false, score: 0, speed: 12, phase: 0, health: 100, frame: 0, multiplier: 1.0 };
+
+// ==========================================
+// 音频合成引擎 (Web Audio API)
+// ==========================================
+const AudioEngine = {
+    ctx: null, masterGain: null,
+    init() {
+        if(this.ctx) return;
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.25;
+        this.masterGain.connect(this.ctx.destination);
+    },
+    playTone(freq, type, duration, vol=1) {
+        if(!this.ctx) return;
+        let osc = this.ctx.createOscillator();
+        let gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+        osc.connect(gain); gain.connect(this.masterGain);
+        osc.start(); osc.stop(this.ctx.currentTime + duration);
+    },
+    playNoise(duration, vol=1) {
+        if(!this.ctx) return;
+        let bufferSize = this.ctx.sampleRate * duration;
+        let buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        let data = buffer.getChannelData(0);
+        for (let i=0; i<bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        let noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+        let gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+        noise.connect(gain); gain.connect(this.masterGain);
+        noise.start();
+    }
+};
+
+// ==========================================
+// 分形背景缓冲
+// ==========================================
+class FractalBackground {
+    constructor() {
+        this.buffer = document.createElement('canvas');
+        this.buffer.width = WIDTH * 2;
+        this.buffer.height = HEIGHT;
+        this.bCtx = this.buffer.getContext('2d');
+        this.offsetX = 0;
+        this.generateFractalTexture();
+    }
+    drawBranch(x, y, len, angle, depth) {
+        if (depth === 0) return;
+        let endX = x + len * Math.cos(angle);
+        let endY = y + len * Math.sin(angle);
+        this.bCtx.beginPath();
+        this.bCtx.moveTo(x, y); this.bCtx.lineTo(endX, endY);
+        this.bCtx.strokeStyle = `rgba(0, 240, 255, ${depth * 0.04})`;
+        this.bCtx.lineWidth = depth * 0.6;
+        this.bCtx.stroke();
+        this.drawBranch(endX, endY, len * 0.75, angle - 0.4, depth - 1);
+        this.drawBranch(endX, endY, len * 0.75, angle + 0.4, depth - 1);
+    }
+    generateFractalTexture() {
+        this.bCtx.fillStyle = '#010103';
+        this.bCtx.fillRect(0, 0, this.buffer.width, this.buffer.height);
+        for(let i=0; i<10; i++) {
+            this.drawBranch(250 * i, HEIGHT, 110, -Math.PI/2, 7);
+            this.drawBranch(250 * i + 125, 0, 90, Math.PI/2, 6);
+        }
+    }
+    update(speed) {
+        this.offsetX -= speed * 0.2;
+        if(this.offsetX <= -WIDTH) this.offsetX = 0;
+    }
+    draw(ctx) {
+        ctx.drawImage(this.buffer, this.offsetX, 0);
+        ctx.drawImage(this.buffer, this.offsetX + WIDTH, 0);
+        
+        // 绘制三条轨道的发光辅助线
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([15, 15]);
+        LANES.forEach(y => {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WIDTH, y); ctx.stroke();
+        });
+        ctx.restore();
+    }
+}
+const bg = new FractalBackground();
+
+// ==========================================
+// 玩家实体 (包含多维度控制)
+// ==========================================
+class Player {
+    constructor() {
+        this.lane = 1; // 0, 1, 2
+        this.xPos = 0; // -1 (后退), 0 (居中), 1 (突进)
+        this.x = 200;
+        this.y = LANES[this.lane];
+        this.r = 22;
+        this.time = 0;
+    }
+    moveY(dir) {
+        this.lane = Math.max(0, Math.min(2, this.lane + dir));
+        AudioEngine.playTone(600, 'sine', 0.1, 0.1);
+    }
+    moveX(dir) {
+        this.xPos = Math.max(-1, Math.min(1, this.xPos + dir));
+    }
+    update() {
+        this.time += 0.1;
+        // 物理缓动插值
+        let targetY = LANES[this.lane];
+        let targetX = 250 + (this.xPos * 180); 
+        this.y += (targetY - this.y) * 0.25;
+        this.x += (targetX - this.x) * 0.15;
+        
+        // 动态计算分数倍率 (突进风险高，得分多)
+        state.multiplier = this.xPos === 1 ? 2.5 : (this.xPos === -1 ? 0.5 : 1.0);
+    }
+    draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        let color = PHASES[state.phase].color;
+        
+        // 动态光晕
+        ctx.shadowBlur = 25;
+        ctx.shadowColor = color;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+
+        // 参数化核心几何绘制
+        ctx.beginPath();
+        for(let i=0; i<=Math.PI*2; i+=0.2) {
+            let rMod = this.r + Math.sin(this.time * 6 + i * 3) * 6;
+            let px = Math.cos(i) * rMod * 1.3;
+            let py = Math.sin(i) * rMod;
+            if(i===0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        // 中心自旋装甲
+        ctx.rotate(this.time * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(-8, -8, 16, 16);
+        ctx.restore();
+    }
+}
+const player = new Player();
+
+// ==========================================
+// 障碍物基类与各种衍生实体
+// ==========================================
+let entities = [];
+
+// 1. 暗物质诡雷 (只能躲避，撞击扣血)
+class DarkMine {
+    constructor() {
+        this.lane = Math.floor(Math.random() * 3);
+        this.x = WIDTH + 100;
+        this.y = LANES[this.lane];
+        this.r = 25;
+        this.passed = false;
+        this.angle = 0;
+    }
+    update(speed) {
+        this.x -= speed;
+        this.angle -= 0.1;
+        this.checkCollision();
+    }
+    checkCollision() {
+        if (this.passed) return;
+        let d = Math.hypot(player.x - this.x, player.y - this.y);
+        if (d < this.r + player.r - 5) {
+            this.passed = true;
+            state.health -= 35; // 重创
+            AudioEngine.playNoise(0.3, 0.8);
+            flashCanvas();
+            if (state.health <= 0) gameOver();
+        }
+    }
+    draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        ctx.fillStyle = '#111';
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 3;
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = '#ff0000';
+        
+        ctx.beginPath();
+        for(let i=0; i<8; i++) {
+            let a = (Math.PI/4) * i;
+            let dist = i % 2 === 0 ? this.r : this.r/2;
+            let px = Math.cos(a) * dist;
+            let py = Math.sin(a) * dist;
+            if(i===0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // 核心红点警告
+        ctx.fillStyle = '#ff0000';
+        ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+    }
+}
+
+// 2. 相位矩阵墙 (匹配颜色撞碎)
+class PhaseGate {
+    constructor() {
+        this.lane = Math.floor(Math.random() * 3);
+        this.x = WIDTH + 100;
+        this.y = LANES[this.lane];
+        this.colorId = Math.floor(Math.random() * 3);
+        this.w = 30;
+        this.h = 140; // 封锁单轨道
+        this.passed = false;
+    }
+    update(speed) {
+        this.x -= speed;
+        this.checkCollision();
+    }
+    checkCollision() {
+        if (this.passed) return;
+        // 矩形 AABB 碰撞判断
+        if (player.x + player.r > this.x - this.w/2 && 
+            player.x - player.r < this.x + this.w/2 &&
+            player.y + player.r > this.y - this.h/2 && 
+            player.y - player.r < this.y + this.h/2) {
+            
+            this.passed = true;
+            if (state.phase === this.colorId) {
+                // 撞碎得分
+                state.score += 800 * state.multiplier;
+                state.health = Math.min(100, state.health + 10);
+                AudioEngine.playTone(900, 'square', 0.15, 0.3);
+                this.y = -999; // 隐藏
+            } else {
+                // 错误损伤
+                state.health -= 25;
+                AudioEngine.playNoise(0.2, 0.6);
+                flashCanvas();
+                if (state.health <= 0) gameOver();
+            }
+        }
+    }
+    draw(ctx) {
+        if(this.passed && this.y === -999) return;
+        ctx.save();
+        let c = PHASES[this.colorId].color;
+        ctx.fillStyle = c;
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = c;
+        
+        ctx.globalAlpha = 0.6;
+        ctx.fillRect(this.x - this.w/2, this.y - this.h/2, this.w, this.h);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(this.x - 2, this.y - this.h/2, 4, this.h);
+        ctx.restore();
+    }
+}
+
+// 3. 纳米蜂群 (Boids 智能游动，引力博弈)
+class SwarmBoid {
+    constructor(x, y, colorId) {
+        this.x = x; this.y = y;
+        this.vx = (Math.random()-0.5)*5; this.vy = (Math.random()-0.5)*5;
+        this.colorId = colorId;
+        this.active = true;
+    }
+    update(speed, swarmCenterX, swarmCenterY) {
+        if(!this.active) return;
+        // 简单的凝聚力与噪波随机游动
+        this.vx += (swarmCenterX - this.x)*0.005 + (Math.random()-0.5)*0.5;
+        this.vy += (swarmCenterY - this.y)*0.005 + (Math.random()-0.5)*0.5;
+        
+        // 限速
+        let s = Math.hypot(this.vx, this.vy);
+        if(s > 6) { this.vx = (this.vx/s)*6; this.vy = (this.vy/s)*6; }
+        
+        this.x += this.vx - speed;
+        this.y += this.vy;
+
+        // 博弈判定
+        let d = Math.hypot(player.x - this.x, player.y - this.y);
+        if (d < 120) { // 进入引力场
+            if(state.phase === this.colorId) {
+                // 吸附同化
+                this.vx += (player.x - this.x)*0.05;
+                this.vy += (player.y - this.y)*0.05;
+                if(d < 30) {
+                    this.active = false;
+                    state.score += 30 * state.multiplier;
+                    state.health = Math.min(100, state.health + 0.5);
+                }
+            } else {
+                // 攻击
+                this.vx += (player.x - this.x)*0.03;
+                this.vy += (player.y - this.y)*0.03;
+                if(d < 20) {
+                    this.active = false;
+                    state.health -= 3;
+                    AudioEngine.playNoise(0.05, 0.2);
+                    if(state.health <= 0) gameOver();
+                }
+            }
+        }
+    }
+    draw(ctx) {
+        if(!this.active) return;
+        ctx.fillStyle = PHASES[this.colorId].color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 4, 0, Math.PI*2);
+        ctx.fill();
+    }
+}
+class SwarmGroup {
+    constructor() {
+        this.boids = [];
+        this.colorId = Math.floor(Math.random() * 3);
+        this.lane = Math.floor(Math.random() * 3);
+        this.cx = WIDTH + 150;
+        this.cy = LANES[this.lane];
+        for(let i=0; i<25; i++) {
+            this.boids.push(new SwarmBoid(this.cx + (Math.random()-0.5)*100, this.cy + (Math.random()-0.5)*100, this.colorId));
+        }
+    }
+    update(speed) {
+        this.cx -= speed;
+        let alive = 0;
+        for(let b of this.boids) {
+            if(b.active) { b.update(speed, this.cx, this.cy); alive++; }
+        }
+        if(alive === 0 || this.cx < -200) this.dead = true;
+    }
+    draw(ctx) {
+        ctx.save();
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = PHASES[this.colorId].color;
+        for(let b of this.boids) b.draw(ctx);
+        ctx.restore();
+    }
+}
+
+let spawnTimer = 0;
+
+function flashCanvas() {
+    canvas.style.transform = `translate(${(Math.random()-0.5)*20}px, ${(Math.random()-0.5)*20}px)`;
+    setTimeout(() => canvas.style.transform = 'none', 50);
+}
+
+// ==========================================
+// 主循环管道
+// ==========================================
+function engineLoop() {
+    if(!state.running) return;
+    state.frame++;
+
+    // 拖尾清屏
+    ctx.fillStyle = 'rgba(1, 1, 3, 0.45)';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    bg.update(state.speed);
+    bg.draw(ctx);
+
+    // 实体生成调度
+    spawnTimer--;
+    if(spawnTimer <= 0) {
+        let rand = Math.random();
+        if(rand < 0.3) {
+            entities.push(new DarkMine());
+        } else if(rand < 0.6) {
+            entities.push(new PhaseGate());
+        } else {
+            entities.push(new SwarmGroup());
+        }
+        spawnTimer = Math.max(45, 110 - Math.floor(state.speed * 3));
+        state.speed = Math.min(25, state.speed + 0.05);
+    }
+
+    // 更新绘制实体
+    for(let i=entities.length-1; i>=0; i--) {
+        let ent = entities[i];
+        ent.update(state.speed);
+        if(!ent.dead) ent.draw(ctx);
+        
+        // 垃圾回收
+        if(ent.dead || ent.x < -100 || ent.cx < -200) {
+            entities.splice(i, 1);
+        }
+    }
+
+    player.update();
+    player.draw(ctx);
+
+    // UI数据更新
+    state.score += 1 * state.multiplier;
+    document.getElementById('ui-score').innerText = String(Math.floor(state.score)).padStart(6, '0');
+    document.getElementById('ui-mult').innerText = `x${state.multiplier.toFixed(1)}`;
+    document.getElementById('ui-health').style.width = state.health + '%';
+
+    requestAnimationFrame(engineLoop);
+}
+
+function setPhase(idx) {
+    state.phase = idx;
+    for(let i=0; i<3; i++) {
+        let node = document.getElementById(`node-${i}`);
+        if(i === idx) node.classList.add('active');
+        else node.classList.remove('active');
+    }
+    let freqs = [350, 450, 550];
+    AudioEngine.playTone(freqs[idx], 'sawtooth', 0.08, 0.1);
+}
+
+function bootSystem() {
+    AudioEngine.init();
+    state = { running: true, score: 0, speed: 10, phase: 0, health: 100, frame: 0, multiplier: 1.0 };
+    entities = [];
+    spawnTimer = 60;
+    setPhase(0);
+    player.lane = 1;
+    player.xPos = 0;
+    document.getElementById('boot-mask').classList.add('hidden');
+    requestAnimationFrame(engineLoop);
+}
+
+function gameOver() {
+    state.running = false;
+    AudioEngine.playNoise(1.5, 0.8); 
+    document.getElementById('menu-title').innerText = "ENTITY SHATTERED";
+    document.getElementById('btn-start').innerText = "重启突触链接";
+    document.getElementById('boot-mask').classList.remove('hidden');
+}
+
+// ==========================================
+// 严密的双轴输入映射
+// ==========================================
+window.addEventListener('keydown', (e) => {
+    if(!state.running) return;
+
+    // 左手：空间轴控制
+    if(e.key === 'w' || e.key === 'W') player.moveY(-1);
+    if(e.key === 's' || e.key === 'S') player.moveY(1);
+    if(e.key === 'a' || e.key === 'A') player.moveX(-1);
+    if(e.key === 'd' || e.key === 'D') player.moveX(1);
+
+    // 右手：相位轴控制 (J K L)
+    if(e.key === 'j' || e.key === 'J') setPhase(0);
+    if(e.key === 'k' || e.key === 'K') setPhase(1);
+    if(e.key === 'l' || e.key === 'L') setPhase(2);
+
+    // 右手备用方案：方向键
+    if(e.key === 'ArrowLeft') { setPhase(0); e.preventDefault(); }
+    if(e.key === 'ArrowDown') { setPhase(1); e.preventDefault(); }
+    if(e.key === 'ArrowRight') { setPhase(2); e.preventDefault(); }
+});
+
+document.getElementById('btn-start').addEventListener('click', bootSystem);
+</script>
+</body>
+</html>
